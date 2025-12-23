@@ -1,0 +1,227 @@
+[
+  {
+    "timestamp": "2025-12-14T00:00:01Z",
+    "phase": "Phase 1",
+    "task": "Tạo pyproject.toml",
+    "action": "CREATE_FILE",
+    "file": "pyproject.toml",
+    "status": "SUCCESS",
+    "details": "Created project configuration with all dependencies: FastAPI, Meilisearch, RustworkX, Tree-sitter, sentence-transformers, pytest, etc."
+  },
+  {
+    "timestamp": "2025-12-14T00:00:02Z",
+    "phase": "Phase 1",
+    "task": "Tạo docker-compose.yml",
+    "action": "CREATE_FILE",
+    "file": "docker-compose.yml",
+    "status": "SUCCESS",
+    "details": "Meilisearch v1.6 with vector search enabled, persistent volume, health check configured"
+  },
+  {
+    "timestamp": "2025-12-14T00:00:03Z",
+    "phase": "Phase 1",
+    "task": "Tạo .env.example",
+    "action": "CREATE_FILE",
+    "file": ".env.example",
+    "status": "SUCCESS",
+    "details": "Environment template with all configuration sections: App, API, Meilisearch, Embedding, Graph, Indexing, Cache, Performance"
+  },
+  {
+    "timestamp": "2025-12-14T00:00:04Z",
+    "phase": "Phase 1",
+    "task": "Tạo cấu trúc thư mục",
+    "action": "CREATE_DIRECTORIES",
+    "file": "src/smart_search/*, tests/*, data/*, scripts/",
+    "status": "SUCCESS",
+    "details": "Created full directory structure with 12 __init__.py files for all modules: api, core, utils, parsing, graph, embedding, search, indexing, rag"
+  },
+  {
+    "timestamp": "2025-12-14T00:00:05Z",
+    "phase": "Phase 1",
+    "task": "Tạo config.py",
+    "action": "CREATE_FILE",
+    "file": "src/smart_search/config.py",
+    "status": "SUCCESS",
+    "details": "Pydantic Settings with 8 config sections: App, API, Meilisearch, Embedding, Graph, Indexing, Cache, Performance. Includes validators and cached get_settings()"
+  },
+  {
+    "timestamp": "2025-12-14T00:00:06Z",
+    "phase": "Phase 1",
+    "task": "Tạo core/exceptions.py",
+    "action": "CREATE_FILE",
+    "file": "src/smart_search/core/exceptions.py",
+    "status": "SUCCESS",
+    "details": "Custom exception hierarchy: SmartSearchError base, ConfigurationError, SearchError, GraphError, ParsingError, EmbeddingError, IndexingError, RAGError with to_dict() for API responses"
+  },
+  {
+    "timestamp": "2025-12-14T00:00:07Z",
+    "phase": "Phase 1",
+    "task": "Tạo utils/logging.py",
+    "action": "CREATE_FILE",
+    "file": "src/smart_search/utils/logging.py",
+    "status": "SUCCESS",
+    "details": "Structlog configuration with dev/prod modes, get_logger(), LogContext context manager, bind/unbind/clear context helpers"
+  },
+  {
+    "timestamp": "2025-12-14T00:00:08Z",
+    "phase": "Phase 1",
+    "task": "Tạo API router và health endpoints",
+    "action": "CREATE_FILE",
+    "file": "src/smart_search/api/router.py, src/smart_search/api/endpoints/health.py",
+    "status": "SUCCESS",
+    "details": "Health endpoints: /health (basic), /health/ready (with Meilisearch check), /health/live (liveness probe). Router with /api/v1 prefix"
+  },
+  {
+    "timestamp": "2025-12-14T00:00:09Z",
+    "phase": "Phase 1",
+    "task": "Tạo main.py",
+    "action": "CREATE_FILE",
+    "file": "src/smart_search/main.py",
+    "status": "SUCCESS",
+    "details": "FastAPI app with lifespan, CORS middleware, exception handlers, create_app factory, uvicorn runner"
+  },
+  {
+    "timestamp": "2025-12-14T00:00:10Z",
+    "phase": "Phase 1",
+    "task": "Tạo test infrastructure và chạy tests",
+    "action": "CREATE_FILES_AND_RUN_TESTS",
+    "file": "tests/conftest.py, tests/unit/test_*.py, pytest.ini, .coveragerc",
+    "status": "SUCCESS",
+    "details": "Created 5 test files with 101 tests. All tests PASSED. Coverage: 97.34% (exceeded 85% requirement)"
+  },
+  {
+    "timestamp": "2025-12-14T00:00:11Z",
+    "phase": "Phase 1",
+    "task": "PHASE 1 COMPLETED",
+    "action": "PHASE_COMPLETE",
+    "file": null,
+    "status": "SUCCESS",
+    "details": "Phase 1 Foundation completed successfully. 101 tests passed, 97.34% coverage. Ready for Phase 2: AST Parsing"
+  },
+  {
+    "timestamp": "2025-12-14T00:01:01Z",
+    "phase": "Phase 2",
+    "task": "Tạo parsing/models.py",
+    "action": "CREATE_FILE",
+    "file": "src/smart_search/parsing/models.py",
+    "status": "SUCCESS",
+    "details": "Data models: Language enum, Position, Span, Parameter, CodeUnitType, CodeUnit, ParsedFile, CodeChunk dataclasses with serialization"
+  },
+  {
+    "timestamp": "2025-12-14T00:01:02Z",
+    "phase": "Phase 2",
+    "task": "Tạo tree_sitter_parser.py",
+    "action": "CREATE_FILE",
+    "file": "src/smart_search/parsing/tree_sitter_parser.py",
+    "status": "SUCCESS",
+    "details": "TreeSitterParser with multi-language support, parse_source(), parse_file(), register_extractor(), import/docstring extraction"
+  },
+  {
+    "timestamp": "2025-12-14T00:01:03Z",
+    "phase": "Phase 2",
+    "task": "Tạo chunker.py",
+    "action": "CREATE_FILE",
+    "file": "src/smart_search/parsing/chunker.py",
+    "status": "SUCCESS",
+    "details": "CodeChunker for embedding-size chunks, SmartChunker for semantic boundary splitting, context preservation, overlap handling"
+  },
+  {
+    "timestamp": "2025-12-14T00:01:04Z",
+    "phase": "Phase 2",
+    "task": "Tạo extractors/python.py",
+    "action": "CREATE_FILE",
+    "file": "src/smart_search/parsing/extractors/python.py",
+    "status": "SUCCESS",
+    "details": "PythonExtractor: functions, classes, methods, parameters (*args, **kwargs, typed defaults), decorators, docstrings, function calls extraction"
+  },
+  {
+    "timestamp": "2025-12-14T00:01:05Z",
+    "phase": "Phase 2",
+    "task": "Tạo Phase 2 tests",
+    "action": "CREATE_FILES",
+    "file": "tests/unit/test_parsing/test_*.py",
+    "status": "SUCCESS",
+    "details": "Created 4 test files: test_models.py (26 tests), test_tree_sitter_parser.py (16 tests), test_python_extractor.py (18 tests), test_chunker.py (17 tests)"
+  },
+  {
+    "timestamp": "2025-12-14T00:01:06Z",
+    "phase": "Phase 2",
+    "task": "Fix typed_default_parameter handling",
+    "action": "FIX_BUG",
+    "file": "src/smart_search/parsing/extractors/python.py",
+    "status": "SUCCESS",
+    "details": "Added handling for typed_default_parameter AST node (parameters with both type annotation AND default value like 'b: int = 0')"
+  },
+  {
+    "timestamp": "2025-12-14T00:01:07Z",
+    "phase": "Phase 2",
+    "task": "PHASE 2 COMPLETED",
+    "action": "PHASE_COMPLETE",
+    "file": null,
+    "status": "SUCCESS",
+    "details": "Phase 2 AST Parsing completed successfully. 77 tests passed, 87.94% coverage. Ready for Phase 3: Graph Engine"
+  },
+  {
+    "timestamp": "2025-12-14T00:02:01Z",
+    "phase": "Phase 3",
+    "task": "Tạo graph/models.py",
+    "action": "CREATE_FILE",
+    "file": "src/smart_search/graph/models.py",
+    "status": "SUCCESS",
+    "details": "Graph data models: NodeType, EdgeType enums, NodeData, EdgeData, GraphNode, GraphEdge, TraversalOptions, PathResult, SubgraphResult, GraphStats, ImpactAnalysisResult"
+  },
+  {
+    "timestamp": "2025-12-14T00:02:02Z",
+    "phase": "Phase 3",
+    "task": "Tạo graph/engine.py",
+    "action": "CREATE_FILE",
+    "file": "src/smart_search/graph/engine.py",
+    "status": "SUCCESS",
+    "details": "CodeGraph class using RustworkX: add/remove nodes/edges, traversal, path finding, subgraph extraction, statistics, serialization"
+  },
+  {
+    "timestamp": "2025-12-14T00:02:03Z",
+    "phase": "Phase 3",
+    "task": "Tạo graph/builder.py",
+    "action": "CREATE_FILE",
+    "file": "src/smart_search/graph/builder.py",
+    "status": "SUCCESS",
+    "details": "GraphBuilder: build from CodeUnits, handle parent-child, inheritance, call relationships, import edges"
+  },
+  {
+    "timestamp": "2025-12-14T00:02:04Z",
+    "phase": "Phase 3",
+    "task": "Tạo graph/algorithms.py",
+    "action": "CREATE_FILE",
+    "file": "src/smart_search/graph/algorithms.py",
+    "status": "SUCCESS",
+    "details": "GraphAlgorithms: find callers/callees, ancestors/descendants, impact analysis, centrality calculation, cycle detection, dead code detection"
+  },
+  {
+    "timestamp": "2025-12-14T00:02:05Z",
+    "phase": "Phase 3",
+    "task": "Tạo graph/persistence.py",
+    "action": "CREATE_FILE",
+    "file": "src/smart_search/graph/persistence.py",
+    "status": "SUCCESS",
+    "details": "GraphPersistence: save/load JSON, compressed JSON, incremental with metadata. GraphCache: LRU cache for graphs"
+  },
+  {
+    "timestamp": "2025-12-14T00:02:06Z",
+    "phase": "Phase 3",
+    "task": "Tạo Phase 3 tests",
+    "action": "CREATE_FILES",
+    "file": "tests/unit/test_graph/test_*.py",
+    "status": "SUCCESS",
+    "details": "Created 5 test files: test_models.py (30 tests), test_engine.py (40 tests), test_builder.py (13 tests), test_algorithms.py (21 tests), test_persistence.py (20 tests)"
+  },
+  {
+    "timestamp": "2025-12-14T00:02:07Z",
+    "phase": "Phase 3",
+    "task": "PHASE 3 COMPLETED",
+    "action": "PHASE_COMPLETE",
+    "file": null,
+    "status": "SUCCESS",
+    "details": "Phase 3 Graph Engine completed successfully. 124 tests passed, 87.69% coverage. Ready for Phase 4: Embedding Pipeline"
+  }
+]

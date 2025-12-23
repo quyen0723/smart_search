@@ -1,0 +1,34 @@
+version: "3.8"
+
+services:
+  meilisearch:
+    image: getmeili/meilisearch:v1.6
+    container_name: smart_search_meilisearch
+    ports:
+      - "${MEILISEARCH_PORT:-7700}:7700"
+    environment:
+      - MEILI_MASTER_KEY=${MEILISEARCH_MASTER_KEY:-smart_search_dev_key}
+      - MEILI_ENV=${MEILISEARCH_ENV:-development}
+      - MEILI_NO_ANALYTICS=true
+      - MEILI_LOG_LEVEL=${MEILISEARCH_LOG_LEVEL:-INFO}
+      # Enable vector search (experimental feature)
+      - MEILI_EXPERIMENTAL_VECTOR_SEARCH=true
+    volumes:
+      - meilisearch_data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - smart_search_network
+
+volumes:
+  meilisearch_data:
+    driver: local
+
+networks:
+  smart_search_network:
+    driver: bridge

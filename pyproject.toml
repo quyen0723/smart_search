@@ -1,0 +1,178 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "smart-search"
+version = "0.1.0"
+description = "Intelligent Source Code Navigation System with Hybrid Search, Graph Analysis, and GraphRAG"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "Smart Search Team" }
+]
+keywords = ["code-search", "graph-analysis", "semantic-search", "graphrag"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    # Web Framework
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+
+    # Search Engine
+    "meilisearch>=0.31.0",
+
+    # Graph Engine
+    "rustworkx>=0.14.0",
+
+    # AST Parsing
+    "tree-sitter>=0.25.0",
+    "tree-sitter-python>=0.23.0",
+    "tree-sitter-javascript>=0.23.0",
+    "tree-sitter-java>=0.23.0",
+    "tree-sitter-go>=0.23.0",
+
+    # Embedding
+    "sentence-transformers>=2.2.0",
+    "torch>=2.0.0",
+
+    # Serialization & Cache
+    "msgpack>=1.0.0",
+    "diskcache>=5.6.0",
+
+    # File Watching
+    "watchdog>=4.0.0",
+
+    # Utilities
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0.0",
+    "structlog>=24.1.0",
+    "rich>=13.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-mock>=3.12.0",
+    "pytest-xdist>=3.5.0",
+    "httpx>=0.27.0",
+    "ruff>=0.2.0",
+    "mypy>=1.8.0",
+    "pre-commit>=3.6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/smart-search/smart-search"
+Documentation = "https://github.com/smart-search/smart-search#readme"
+Repository = "https://github.com/smart-search/smart-search"
+
+[project.scripts]
+smart-search = "smart_search.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/smart_search"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults
+    "B904",   # raise without from inside except
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["smart_search"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = [
+    "meilisearch.*",
+    "rustworkx.*",
+    "tree_sitter.*",
+    "sentence_transformers.*",
+    "diskcache.*",
+    "msgpack.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--cov=src/smart_search",
+    "--cov-report=term-missing",
+    "--cov-report=html:htmlcov",
+    "--cov-fail-under=85",
+]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "e2e: End-to-end tests",
+    "slow: Slow tests",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["src/smart_search"]
+branch = true
+parallel = true
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "**/meilisearch_client.py",  # Requires live Meilisearch server
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "@abstractmethod",
+]
+fail_under = 85
+show_missing = true
