@@ -289,6 +289,15 @@ class IndexDocument:
     embedding: list[float] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def _sanitize_id(self, doc_id: str) -> str:
+        """Sanitize document ID for Meilisearch.
+
+        Meilisearch only allows alphanumeric, hyphens, and underscores.
+        We use a hash to ensure unique, valid IDs.
+        """
+        import hashlib
+        return hashlib.md5(doc_id.encode()).hexdigest()
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for indexing.
 
@@ -296,7 +305,8 @@ class IndexDocument:
             Dictionary representation.
         """
         doc = {
-            "id": self.id,
+            "id": self._sanitize_id(self.id),
+            "original_id": self.id,  # Keep original for reference
             "name": self.name,
             "qualified_name": self.qualified_name,
             "code_type": self.code_type,
@@ -311,6 +321,9 @@ class IndexDocument:
         }
         if self.embedding is not None:
             doc["_vectors"] = {"default": self.embedding}
+        else:
+            # Opt-out of vector embedding when not provided
+            doc["_vectors"] = {"default": None}
         return doc
 
 

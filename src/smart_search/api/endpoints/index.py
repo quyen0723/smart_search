@@ -129,6 +129,32 @@ def _generate_job_id() -> str:
     return str(uuid.uuid4())[:8]
 
 
+def _validate_path(path: Path, base_paths: list[Path] | None = None) -> bool:
+    """Validate path to prevent path traversal attacks.
+
+    Args:
+        path: Path to validate.
+        base_paths: Allowed base directories (if None, just check for traversal).
+
+    Returns:
+        True if path is safe, False otherwise.
+    """
+    try:
+        resolved = path.resolve()
+        # Check for path traversal attempts
+        if ".." in str(path):
+            return False
+        # If base paths specified, ensure resolved path is under one of them
+        if base_paths:
+            return any(
+                resolved.is_relative_to(base.resolve())
+                for base in base_paths
+            )
+        return True
+    except (ValueError, OSError):
+        return False
+
+
 async def _run_index_job(
     job_id: str,
     paths: list[str],
@@ -143,17 +169,29 @@ async def _run_index_job(
     jobs[job_id].status = "running"
 
     try:
-        # Discover files
+        # Discover files with path validation
         all_files = []
+        base_paths = [Path(p).resolve() for p in paths if Path(p).exists()]
+
         for path_str in paths:
             path = Path(path_str)
+
+            # Security: validate path
+            if not _validate_path(path):
+                jobs[job_id].errors.append(f"Invalid path (security): {path_str}")
+                continue
+
             if path.is_file():
-                all_files.append(path)
+                all_files.append(path.resolve())
             elif path.is_dir():
                 if recursive:
-                    all_files.extend(path.rglob("*"))
+                    for f in path.rglob("*"):
+                        if _validate_path(f, base_paths):
+                            all_files.append(f.resolve())
                 else:
-                    all_files.extend(path.glob("*"))
+                    for f in path.glob("*"):
+                        if _validate_path(f, base_paths):
+                            all_files.append(f.resolve())
 
         # Filter files
         files_to_index = []

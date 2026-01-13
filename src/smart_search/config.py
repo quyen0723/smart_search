@@ -134,6 +134,46 @@ class PerformanceSettings(BaseSettings):
     graph_max_nodes: int = Field(default=10000, ge=100)
 
 
+class FeatureFlags(BaseSettings):
+    """Feature flags for gradual rollout and A/B testing.
+
+    All flags default to False for safe rollout.
+    Enable via environment variables: FF_USE_MEILISEARCH_SEARCH=true
+    """
+
+    model_config = SettingsConfigDict(env_prefix="FF_")
+
+    # Search routing
+    use_meilisearch_search: bool = Field(
+        default=False,
+        description="Route search queries to Meilisearch instead of brute-force"
+    )
+
+    # Reference index
+    use_reference_index: bool = Field(
+        default=False,
+        description="Use inverted index for find_references instead of file scanning"
+    )
+
+    # Caching
+    use_file_cache: bool = Field(
+        default=True,
+        description="Enable LRU cache for file content"
+    )
+
+    # Async I/O
+    use_async_io: bool = Field(
+        default=True,
+        description="Use aiofiles for non-blocking file I/O"
+    )
+
+    # HybridSearcher
+    use_hybrid_searcher: bool = Field(
+        default=False,
+        description="Use HybridSearcher instead of SimpleIndexer"
+    )
+
+
 class Settings(BaseSettings):
     """Main settings container aggregating all configuration sections."""
 
@@ -151,6 +191,7 @@ class Settings(BaseSettings):
     indexing: IndexingSettings = Field(default_factory=IndexingSettings)
     cache: CacheSettings = Field(default_factory=CacheSettings)
     performance: PerformanceSettings = Field(default_factory=PerformanceSettings)
+    feature_flags: FeatureFlags = Field(default_factory=FeatureFlags)
 
 
 @lru_cache

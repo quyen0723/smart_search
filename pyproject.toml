@@ -32,6 +32,7 @@ dependencies = [
 
     # Search Engine
     "meilisearch>=0.31.0",
+    "meilisearch-python-sdk>=0.31.0",  # Async client for Full Mode
 
     # Graph Engine
     "rustworkx>=0.14.0",
@@ -53,6 +54,9 @@ dependencies = [
 
     # File Watching
     "watchdog>=4.0.0",
+
+    # Async I/O
+    "aiofiles>=24.0.0",
 
     # Utilities
     "httpx>=0.27.0",

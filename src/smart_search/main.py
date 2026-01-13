@@ -8,9 +8,12 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
+import time
+
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from smart_search import __version__
 from smart_search.api.router import api_router
@@ -19,6 +22,41 @@ from smart_search.core.exceptions import SmartSearchError
 from smart_search.utils.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
+
+# Performance threshold for slow request warnings (seconds)
+_SLOW_REQUEST_THRESHOLD = 1.0
+
+
+class PerformanceLoggingMiddleware(BaseHTTPMiddleware):
+    """Middleware to log request performance metrics.
+
+    Logs duration for every request and warns when requests exceed threshold.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.perf_counter()
+
+        response = await call_next(request)
+
+        duration = time.perf_counter() - start_time
+
+        # Log performance metrics
+        log_data = {
+            "method": request.method,
+            "path": request.url.path,
+            "duration_ms": round(duration * 1000, 2),
+            "status_code": response.status_code,
+        }
+
+        if duration > _SLOW_REQUEST_THRESHOLD:
+            logger.warning("Slow request detected", **log_data)
+        else:
+            logger.debug("Request completed", **log_data)
+
+        # Add timing header for debugging
+        response.headers["X-Response-Time"] = f"{duration * 1000:.2f}ms"
+
+        return response
 
 
 from smart_search.api.orchestrator import APIOrchestrator, ServiceConfig
@@ -95,6 +133,9 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Add performance logging middleware
+    app.add_middleware(PerformanceLoggingMiddleware)
 
     # Register exception handlers
     app.add_exception_handler(SmartSearchError, smart_search_exception_handler)

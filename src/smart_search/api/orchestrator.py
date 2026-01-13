@@ -4,12 +4,194 @@ Central orchestrator for Smart Search API services.
 Manages service initialization, lifecycle, and dependency injection.
 """
 
+import os
+import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
+
+from smart_search.config import get_settings, FeatureFlags
+from smart_search.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+
+def get_feature_flags() -> FeatureFlags:
+    """Get current feature flags."""
+    return get_settings().feature_flags
+
+
+class SearchServiceAdapter:
+    """Adapter that routes search to HybridSearcher or SimpleIndexer based on FF.
+
+    This adapter implements the same interface as HybridSearcher but can fallback
+    to SimpleIndexer.search() when FF_USE_HYBRID_SEARCHER is disabled.
+    """
+
+    def __init__(
+        self,
+        hybrid_searcher: Any = None,
+        simple_indexer: Any = None,
+    ):
+        """Initialize search adapter.
+
+        Args:
+            hybrid_searcher: HybridSearcher instance (for Meilisearch).
+            simple_indexer: SimpleIndexer instance (for legacy brute-force).
+        """
+        self.hybrid_searcher = hybrid_searcher
+        self.simple_indexer = simple_indexer
+
+    async def search(self, query: Any) -> Any:
+        """Route search to appropriate backend based on feature flags.
+
+        Args:
+            query: SearchQuery object.
+
+        Returns:
+            SearchResult from either HybridSearcher or SimpleIndexer.
+        """
+        from smart_search.search.schemas import SearchHit, SearchResult, SearchType
+
+        ff = get_feature_flags()
+
+        # Use HybridSearcher if enabled and available
+        if ff.use_hybrid_searcher and self.hybrid_searcher is not None:
+            logger.debug(
+                "Routing search to HybridSearcher",
+                query=query.query if hasattr(query, 'query') else str(query),
+            )
+            return await self.hybrid_searcher.search(query)
+
+        # Fallback to SimpleIndexer
+        if self.simple_indexer is not None:
+            logger.debug(
+                "Routing search to SimpleIndexer (legacy)",
+                query=query.query if hasattr(query, 'query') else str(query),
+            )
+            # SimpleIndexer.search() has different signature
+            query_str = query.query if hasattr(query, 'query') else str(query)
+            limit = query.limit if hasattr(query, 'limit') else 20
+            language = query.filters.languages[0] if (
+                hasattr(query, 'filters') and query.filters and query.filters.languages
+            ) else None
+            code_type = query.filters.code_types[0] if (
+                hasattr(query, 'filters') and query.filters and query.filters.code_types
+            ) else None
+
+            results = await self.simple_indexer.search(
+                query=query_str,
+                limit=limit,
+                language=language,
+                code_type=code_type,
+            )
+
+            # Convert SimpleIndexer results to SearchResult format
+            hits = [
+                SearchHit(
+                    id=r.get("id", ""),
+                    name=r.get("name", ""),
+                    qualified_name=r.get("qualified_name", r.get("name", "")),
+                    code_type=r.get("code_type", "unknown"),
+                    file_path=r.get("file_path", ""),
+                    line_start=r.get("line_start", 0),
+                    line_end=r.get("line_end", 0),
+                    content="",  # SimpleIndexer doesn't return content
+                    language=r.get("language", "unknown"),
+                    score=r.get("score", 0.0),
+                    highlights={},
+                    metadata={},
+                )
+                for r in results
+            ]
+
+            return SearchResult(
+                hits=hits,
+                total=len(hits),
+                query=query_str,
+                search_type=SearchType.KEYWORD,
+                processing_time_ms=0,
+                offset=query.offset if hasattr(query, 'offset') else 0,
+                limit=limit,
+            )
+
+        # No search backend available
+        logger.error("No search backend available")
+        return SearchResult(
+            hits=[],
+            total=0,
+            query=query.query if hasattr(query, 'query') else str(query),
+            search_type=SearchType.KEYWORD,
+            processing_time_ms=0,
+            offset=0,
+            limit=20,
+        )
+
+    async def close(self) -> None:
+        """Close resources."""
+        if self.hybrid_searcher is not None:
+            try:
+                await self.hybrid_searcher.close()
+            except Exception:
+                pass
+
+
+# File content cache with mtime validation
+# Cache max 500 files, invalidate if file modified
+_FILE_CACHE_MAX_SIZE = 500
+
+
+def _get_file_mtime(file_path: str) -> float:
+    """Get file modification time."""
+    try:
+        return os.path.getmtime(file_path)
+    except OSError:
+        return 0.0
+
+
+@lru_cache(maxsize=_FILE_CACHE_MAX_SIZE)
+def _read_file_cached(file_path: str, mtime: float) -> str:
+    """Read file content with LRU cache.
+
+    The mtime parameter ensures cache invalidation when file changes.
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            return f.read()
+    except (OSError, IOError):
+        return ""
+
+
+def read_file_with_cache(file_path: str) -> str:
+    """Read file content using LRU cache with mtime validation.
+
+    Returns empty string if file doesn't exist or can't be read.
+    """
+    mtime = _get_file_mtime(file_path)
+    if mtime == 0.0:
+        return ""
+    return _read_file_cached(file_path, mtime)
+
+
+def get_file_cache_info() -> dict:
+    """Get file cache statistics."""
+    info = _read_file_cached.cache_info()
+    return {
+        "hits": info.hits,
+        "misses": info.misses,
+        "maxsize": info.maxsize,
+        "currsize": info.currsize,
+        "hit_ratio": info.hits / (info.hits + info.misses) if (info.hits + info.misses) > 0 else 0.0
+    }
+
+
+def clear_file_cache() -> None:
+    """Clear the file cache."""
+    _read_file_cached.cache_clear()
 
 
 @dataclass
@@ -131,21 +313,38 @@ class APIOrchestrator:
     async def _init_graph(self) -> None:
         """Initialize code graph."""
         try:
-            from smart_search.graph import CodeGraph
-
-            self.services.graph = CodeGraph()
+            from smart_search.graph import CodeGraph, GraphPersistence
 
             # Load persisted graph if exists
             graph_path = self.config.data_dir / "graph.json"
             if graph_path.exists():
-                from smart_search.graph import GraphPersistence
-                persistence = GraphPersistence(graph_path)
-                persistence.load(self.services.graph)
-        except Exception:
-            self.services.graph = None
+                persistence = GraphPersistence(self.config.data_dir)
+                self.services.graph = persistence.load_json(graph_path)
+                logger.info("Loaded existing graph", path=str(graph_path))
+            else:
+                self.services.graph = CodeGraph()
+                logger.info("Created new empty graph")
+        except Exception as e:
+            logger.warning(f"Failed to initialize graph: {e}")
+            from smart_search.graph import CodeGraph
+            self.services.graph = CodeGraph()  # Fallback to empty graph
 
     async def _init_searcher(self) -> None:
-        """Initialize search service."""
+        """Initialize search service.
+
+        When FF_USE_HYBRID_SEARCHER=true, uses HybridSearcher with Meilisearch.
+        Otherwise, search will fallback to SimpleIndexer.search().
+        """
+        ff = get_feature_flags()
+
+        if not ff.use_hybrid_searcher:
+            logger.info(
+                "HybridSearcher disabled by feature flag",
+                ff_use_hybrid_searcher=ff.use_hybrid_searcher,
+            )
+            self.services.searcher = None
+            return
+
         try:
             from smart_search.search import HybridSearcher, MeilisearchClient
 
@@ -158,7 +357,16 @@ class APIOrchestrator:
                 client=client,
                 embedder=self.services.embedder,
             )
-        except Exception:
+            logger.info(
+                "HybridSearcher initialized (Full Mode)",
+                meilisearch_url=self.config.meilisearch_url,
+                ff_use_hybrid_searcher=True,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to initialize HybridSearcher: {e}",
+                fallback="SimpleIndexer",
+            )
             self.services.searcher = None
 
     async def _init_indexer(self) -> None:
@@ -172,18 +380,51 @@ class APIOrchestrator:
 
             # Create a simple indexer that wraps parsing and graph building
             class SimpleIndexer:
-                def __init__(self, graph, data_dir):
+                # Pre-compiled regex patterns for tokenization (class-level)
+                _RE_NON_ALPHANUM = re.compile(r'[^a-zA-Z0-9]')
+                _RE_CAMEL_SPLIT = re.compile(r'([a-z])([A-Z])')
+                _RE_UPPER_SPLIT = re.compile(r'([A-Z]+)([A-Z][a-z])')
+
+                def __init__(self, graph, data_dir, meilisearch_client=None, embedder=None, reference_index=None):
                     self.graph = graph
                     self.data_dir = data_dir
+                    self.meilisearch_client = meilisearch_client  # For dual-write
+                    self.embedder = embedder  # For generating embeddings
+                    self.reference_index = reference_index  # For O(1) find_references
                     self.parser = TreeSitterParser()
                     self.parser.register_extractor(Language.PYTHON, PythonExtractor())
                     self.parser.register_extractor(Language.PHP, PHPExtractor())
                     self.builder = GraphBuilder()
                     self.indexed_files = {}
+                    # Pre-compiled patterns cache (instance-level for dynamic patterns)
+                    self._pattern_cache = {}
+
+                def _get_compiled_pattern(self, pattern: str, flags: int = 0) -> re.Pattern:
+                    """Get or create a compiled regex pattern from cache."""
+                    key = (pattern, flags)
+                    if key not in self._pattern_cache:
+                        self._pattern_cache[key] = re.compile(pattern, flags)
+                    return self._pattern_cache[key]
+
+                def _tokenize(self, text: str) -> list[str]:
+                    """Split camelCase, PascalCase, snake_case into words (using pre-compiled patterns)."""
+                    # Use class-level pre-compiled patterns
+                    text = self._RE_NON_ALPHANUM.sub(' ', text)
+                    text = self._RE_CAMEL_SPLIT.sub(r'\1 \2', text)
+                    text = self._RE_UPPER_SPLIT.sub(r'\1 \2', text)
+                    return [w.lower() for w in text.split() if w]
 
                 async def index_file(self, file_path, force=False):
-                    """Index a single file."""
+                    """Index a single file.
+
+                    Performs:
+                    1. Graph write (always)
+                    2. Reference Index write (when FF enabled)
+                    3. Meilisearch write (when FF enabled)
+                    """
                     from pathlib import Path
+                    from smart_search.search.schemas import IndexDocument
+
                     path = Path(file_path)
                     if not path.exists() or not path.is_file():
                         return
@@ -198,7 +439,7 @@ class APIOrchestrator:
                     # Parse file
                     result = self.parser.parse_file(path)
                     if result and result.units:
-                        # Add units to graph
+                        # 1. Add units to graph (always)
                         for unit in result.units:
                             self.builder.add_unit(unit)
 
@@ -206,6 +447,95 @@ class APIOrchestrator:
                             "units": len(result.units),
                             "language": language,
                         }
+
+                        # 2. Index references (when FF enabled)
+                        ff = get_feature_flags()
+                        if ff.use_reference_index and self.reference_index is not None:
+                            try:
+                                from smart_search.search.reference_index import (
+                                    SymbolDefinition, ReferenceLocation, ReferenceType
+                                )
+                                # Remove old references from this file first
+                                self.reference_index.remove_file(str(path))
+
+                                # Add definitions
+                                for unit in result.units:
+                                    defn = SymbolDefinition(
+                                        name=unit.name,
+                                        qualified_name=getattr(unit, 'qualified_name', unit.name),
+                                        symbol_type=str(unit.type.value) if hasattr(unit, 'type') else 'unknown',
+                                        file_path=str(path),
+                                        line_start=unit.start_line or 0,
+                                        line_end=unit.end_line or 0,
+                                    )
+                                    self.reference_index.add_definition(defn)
+
+                                    # Add references from callees
+                                    callees = getattr(unit, 'callees', []) or []
+                                    for callee in callees:
+                                        if callee and len(callee) > 2:
+                                            ref = ReferenceLocation(
+                                                file_path=str(path),
+                                                line=unit.start_line or 0,
+                                                ref_type=ReferenceType.CALL,
+                                                context=f"Called from {unit.name}",
+                                            )
+                                            self.reference_index.add_reference(callee, ref)
+
+                                logger.debug(
+                                    "Indexed references",
+                                    file=str(path),
+                                    units=len(result.units),
+                                )
+                            except Exception as e:
+                                logger.warning(f"Reference indexing failed: {e}", file=str(path))
+
+                        # 3. Dual-write to Meilisearch (when FF enabled)
+                        if ff.use_meilisearch_search and self.meilisearch_client is not None:
+                            try:
+                                # Convert parsed units to IndexDocuments
+                                documents = []
+                                for unit in result.units:
+                                    # Read file content for the unit's lines
+                                    content = ""
+                                    try:
+                                        file_content = path.read_text(encoding='utf-8', errors='ignore')
+                                        lines = file_content.split('\n')
+                                        start = max(0, (unit.start_line or 1) - 1)
+                                        end = min(len(lines), unit.end_line or len(lines))
+                                        content = '\n'.join(lines[start:end])
+                                    except Exception:
+                                        pass
+
+                                    doc = IndexDocument(
+                                        id=unit.id,
+                                        name=unit.name,
+                                        qualified_name=getattr(unit, 'qualified_name', unit.name),
+                                        code_type=str(unit.type.value) if hasattr(unit, 'type') else 'unknown',
+                                        file_path=str(path),
+                                        line_start=unit.start_line or 0,
+                                        line_end=unit.end_line or 0,
+                                        content=content,
+                                        language=language,
+                                        signature=getattr(unit, 'signature', ''),
+                                        docstring=getattr(unit, 'docstring', ''),
+                                        embedding=None,  # Embeddings added separately if needed
+                                    )
+                                    documents.append(doc)
+
+                                if documents:
+                                    await self.meilisearch_client.add_documents(documents)
+                                    logger.debug(
+                                        "Dual-write to Meilisearch",
+                                        file=str(path),
+                                        documents=len(documents),
+                                    )
+                            except Exception as e:
+                                # Log but don't fail - graph write succeeded
+                                logger.warning(
+                                    f"Meilisearch dual-write failed: {e}",
+                                    file=str(path),
+                                )
 
                 async def remove_path(self, path: str) -> int:
                     removed = 0
@@ -270,13 +600,44 @@ class APIOrchestrator:
                 async def find_references(self, filename: str, limit: int = 50) -> list[dict]:
                     """Find files that reference/use the given filename.
 
+                    When FF_USE_REFERENCE_INDEX is enabled, uses O(1) index lookup.
+                    Otherwise, falls back to file scanning.
+
                     Searches for:
                     - PHP: require, require_once, include, include_once statements
                     - Python: import, from...import statements
                     - Function/class usage from the file
                     """
-                    import re
                     from pathlib import Path
+
+                    # Fast path: use reference index if available
+                    ff = get_feature_flags()
+                    if ff.use_reference_index and self.reference_index is not None:
+                        refs = self.reference_index.get_references(
+                            filename, include_definition=False, limit=limit
+                        )
+                        results = []
+                        for ref in refs:
+                            results.append({
+                                "file_path": ref.file_path,
+                                "language": "unknown",  # Not stored in ref index
+                                "matches": [{
+                                    "line": ref.line,
+                                    "text": ref.context[:200],
+                                    "type": ref.ref_type.value,
+                                }],
+                                "match_count": 1,
+                                "score": 10,
+                            })
+                        logger.debug(
+                            "find_references via ReferenceIndex",
+                            filename=filename,
+                            results=len(results),
+                        )
+                        return results
+
+                    # Slow path: file scanning
+                    from smart_search.utils.async_io import async_read_files_parallel
 
                     results = []
                     filename_lower = filename.lower()
@@ -284,20 +645,22 @@ class APIOrchestrator:
                     # Extract just the filename without path
                     base_name = Path(filename).name
                     base_name_no_ext = Path(filename).stem
+                    escaped_base = re.escape(base_name)
+                    escaped_stem = re.escape(base_name_no_ext)
 
-                    # Patterns to search for in PHP files
+                    # Pre-compile patterns for PHP files (using cache)
                     php_patterns = [
-                        rf"require\s*\(?['\"].*{re.escape(base_name)}['\"]",
-                        rf"require_once\s*\(?['\"].*{re.escape(base_name)}['\"]",
-                        rf"include\s*\(?['\"].*{re.escape(base_name)}['\"]",
-                        rf"include_once\s*\(?['\"].*{re.escape(base_name)}['\"]",
-                        rf"['\"].*{re.escape(base_name)}['\"]",  # String containing filename
+                        self._get_compiled_pattern(rf"require\s*\(?['\"].*{escaped_base}['\"]", re.IGNORECASE),
+                        self._get_compiled_pattern(rf"require_once\s*\(?['\"].*{escaped_base}['\"]", re.IGNORECASE),
+                        self._get_compiled_pattern(rf"include\s*\(?['\"].*{escaped_base}['\"]", re.IGNORECASE),
+                        self._get_compiled_pattern(rf"include_once\s*\(?['\"].*{escaped_base}['\"]", re.IGNORECASE),
+                        self._get_compiled_pattern(rf"['\"].*{escaped_base}['\"]", re.IGNORECASE),
                     ]
 
-                    # Python patterns
+                    # Pre-compile patterns for Python files
                     python_patterns = [
-                        rf"from\s+{re.escape(base_name_no_ext)}\s+import",
-                        rf"import\s+{re.escape(base_name_no_ext)}",
+                        self._get_compiled_pattern(rf"from\s+{escaped_stem}\s+import", re.IGNORECASE),
+                        self._get_compiled_pattern(rf"import\s+{escaped_stem}", re.IGNORECASE),
                     ]
 
                     # Get functions/classes from the target file
@@ -308,31 +671,38 @@ class APIOrchestrator:
                         if base_name in file_path or filename_lower in file_path.lower():
                             target_units.append(data.name)
 
-                    # Search through indexed files
-                    for file_path, info in self.indexed_files.items():
-                        # Skip the target file itself
-                        if base_name in file_path:
+                    # Filter files to search (exclude target file)
+                    files_to_search = [
+                        (fp, info) for fp, info in self.indexed_files.items()
+                        if base_name not in fp
+                    ]
+
+                    if not files_to_search:
+                        return []
+
+                    # Read all files in parallel using async I/O (non-blocking)
+                    file_paths = [fp for fp, _ in files_to_search]
+                    file_contents = await async_read_files_parallel(file_paths, max_concurrent=50)
+
+                    # Process files (CPU-bound, but now with pre-loaded content)
+                    for file_path, info in files_to_search:
+                        content = file_contents.get(file_path, "")
+                        if not content:
                             continue
 
                         try:
-                            path = Path(file_path)
-                            if not path.exists():
-                                continue
-
-                            content = path.read_text(encoding='utf-8', errors='ignore')
-                            content_lower = content.lower()
-
                             matches = []
                             match_score = 0
 
                             # Check for require/include patterns
                             language = info.get("language", "unknown")
                             patterns = php_patterns if language == "php" else python_patterns
+                            content_lines = content.split('\n')
 
-                            for pattern in patterns:
-                                for match in re.finditer(pattern, content, re.IGNORECASE):
+                            for compiled_pattern in patterns:
+                                for match in compiled_pattern.finditer(content):
                                     line_num = content[:match.start()].count('\n') + 1
-                                    line_text = content.split('\n')[line_num - 1].strip()
+                                    line_text = content_lines[line_num - 1].strip()
                                     if line_text and line_text not in matches:
                                         matches.append({
                                             "line": line_num,
@@ -344,11 +714,11 @@ class APIOrchestrator:
                             # Check for function/class usage from target file
                             for unit_name in target_units:
                                 if unit_name and len(unit_name) > 2:  # Skip very short names
-                                    # Look for function calls or class usage
-                                    func_pattern = rf'\b{re.escape(unit_name)}\s*\('
-                                    for match in re.finditer(func_pattern, content):
+                                    # Use cached compiled pattern for function calls
+                                    func_pattern = self._get_compiled_pattern(rf'\b{re.escape(unit_name)}\s*\(')
+                                    for match in func_pattern.finditer(content):
                                         line_num = content[:match.start()].count('\n') + 1
-                                        line_text = content.split('\n')[line_num - 1].strip()
+                                        line_text = content_lines[line_num - 1].strip()
                                         if line_text and not any(m['text'] == line_text for m in matches):
                                             matches.append({
                                                 "line": line_num,
@@ -375,18 +745,7 @@ class APIOrchestrator:
 
                 async def search(self, query: str, limit: int = 20, language: str = None, code_type: str = None):
                     """Fuzzy text search in indexed code units."""
-                    import re
                     from difflib import SequenceMatcher
-
-                    def tokenize(text: str) -> list[str]:
-                        """Split camelCase, PascalCase, snake_case into words."""
-                        # Split by non-alphanumeric
-                        text = re.sub(r'[^a-zA-Z0-9]', ' ', text)
-                        # Split camelCase: 'getUserData' -> 'get User Data'
-                        text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
-                        # Split consecutive uppercase: 'XMLParser' -> 'XML Parser'
-                        text = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1 \2', text)
-                        return [w.lower() for w in text.split() if w]
 
                     def fuzzy_match(s1: str, s2: str) -> float:
                         """Calculate fuzzy similarity (0-1)."""
@@ -409,7 +768,7 @@ class APIOrchestrator:
 
                     results = []
                     query_lower = query.lower()
-                    query_words = tokenize(query)
+                    query_words = self._tokenize(query)
 
                     for node in self.builder.graph.get_all_nodes():
                         data = node.data
@@ -423,10 +782,10 @@ class APIOrchestrator:
                         qualified_lower = qualified.lower()
                         file_lower = file_path.lower()
 
-                        # Tokenize for fuzzy matching
-                        name_tokens = tokenize(name)
-                        qualified_tokens = tokenize(qualified)
-                        file_tokens = tokenize(file_path.split('/')[-1] if file_path else "")
+                        # Tokenize for fuzzy matching (using pre-compiled patterns)
+                        name_tokens = self._tokenize(name)
+                        qualified_tokens = self._tokenize(qualified)
+                        file_tokens = self._tokenize(file_path.split('/')[-1] if file_path else "")
                         all_tokens = name_tokens + qualified_tokens + file_tokens
 
                         # Exact substring match in name (highest priority)
@@ -482,7 +841,35 @@ class APIOrchestrator:
                     results.sort(key=lambda x: x["score"], reverse=True)
                     return results[:limit]
 
-            self.services.indexer = SimpleIndexer(self.services.graph, self.config.data_dir)
+            # Get Meilisearch client from searcher for dual-write
+            meilisearch_client = None
+            if self.services.searcher is not None and hasattr(self.services.searcher, 'client'):
+                meilisearch_client = self.services.searcher.client
+
+            # Initialize reference index for O(1) find_references
+            ff = get_feature_flags()
+            reference_index = None
+            if ff.use_reference_index:
+                from smart_search.search.reference_index import ReferenceIndex
+                ref_index_path = self.config.data_dir / "reference_index.json"
+                reference_index = ReferenceIndex.load(ref_index_path)
+                logger.info(
+                    "ReferenceIndex loaded",
+                    stats=reference_index.get_stats(),
+                )
+
+            self.services.indexer = SimpleIndexer(
+                graph=self.services.graph,
+                data_dir=self.config.data_dir,
+                meilisearch_client=meilisearch_client,
+                embedder=self.services.embedder,
+                reference_index=reference_index,
+            )
+            logger.info(
+                "SimpleIndexer initialized",
+                dual_write_enabled=meilisearch_client is not None,
+                reference_index_enabled=reference_index is not None,
+            )
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -507,21 +894,37 @@ class APIOrchestrator:
             self.services.graphrag = None
 
     def _inject_dependencies(self) -> None:
-        """Inject service dependencies into endpoint modules."""
+        """Inject service dependencies into endpoint modules.
+
+        Uses SearchServiceAdapter to route between HybridSearcher and SimpleIndexer
+        based on FF_USE_HYBRID_SEARCHER feature flag.
+        """
         # Import endpoint modules
         from smart_search.api.endpoints import search, navigate, analyze, graph, index
 
-        # Inject into search endpoints
-        if self.services.searcher:
-            search.set_searcher(self.services.searcher)
+        # Create search adapter that wraps both HybridSearcher and SimpleIndexer
+        # This allows runtime switching via feature flag
+        search_adapter = SearchServiceAdapter(
+            hybrid_searcher=self.services.searcher,
+            simple_indexer=self.services.indexer,
+        )
+
+        # Inject adapter into search endpoints (always inject - adapter handles None cases)
+        search.set_searcher(search_adapter)
+        logger.info(
+            "SearchServiceAdapter injected",
+            hybrid_available=self.services.searcher is not None,
+            simple_available=self.services.indexer is not None,
+        )
+
         if self.services.graphrag:
             search.set_graphrag(self.services.graphrag)
 
         # Inject into navigate endpoints
         if self.services.graph:
             navigate.set_graph(self.services.graph)
-        if self.services.searcher:
-            navigate.set_searcher(self.services.searcher)
+        # Navigate also uses search adapter for symbol search
+        navigate.set_searcher(search_adapter)
 
         # Inject into analyze endpoints
         if self.services.graph:
@@ -542,14 +945,21 @@ class APIOrchestrator:
 
         Called during application shutdown.
         """
-        # Persist graph
+        # Persist graph using GraphPersistence
         if self.services.graph:
-            graph_path = self.config.data_dir / "graph.json"
-            self.services.graph.save(graph_path)
+            try:
+                from smart_search.graph import GraphPersistence
+                persistence = GraphPersistence(self.config.data_dir)
+                persistence.save_json(self.services.graph, "graph")
+            except Exception:
+                pass  # Ignore persistence errors on shutdown
 
         # Close connections
         if self.services.searcher:
-            await self.services.searcher.close()
+            try:
+                await self.services.searcher.close()
+            except Exception:
+                pass  # Ignore close errors on shutdown
 
         self._initialized = False
 
@@ -595,14 +1005,49 @@ class APIOrchestrator:
         # Health check
         @app.get("/health")
         async def health():
+            services = {
+                "graph": self.services.graph is not None,
+                "searcher": self.services.searcher is not None,
+                "indexer": self.services.indexer is not None,
+                "graphrag": self.services.graphrag is not None,
+            }
+
+            # Check Meilisearch health if available
+            meilisearch_status = {"available": False, "healthy": False}
+            if self.services.searcher is not None:
+                try:
+                    if hasattr(self.services.searcher, 'client'):
+                        client = self.services.searcher.client
+                        # health_check() returns bool, not dict
+                        is_healthy = await client.health_check()
+                        meilisearch_status = {
+                            "available": True,
+                            "healthy": is_healthy,
+                            "url": self.config.meilisearch_url,
+                        }
+                except Exception as e:
+                    meilisearch_status = {
+                        "available": True,
+                        "healthy": False,
+                        "error": str(e),
+                    }
+            services["meilisearch"] = meilisearch_status
+
+            # Check reference index stats if available
+            if self.services.indexer is not None and hasattr(self.services.indexer, 'reference_index'):
+                ref_index = self.services.indexer.reference_index
+                if ref_index is not None:
+                    services["reference_index"] = ref_index.get_stats()
+
+            # Overall status
+            all_healthy = all([
+                services["graph"],
+                services["indexer"],
+            ])
+
             return {
-                "status": "healthy",
-                "services": {
-                    "graph": self.services.graph is not None,
-                    "searcher": self.services.searcher is not None,
-                    "indexer": self.services.indexer is not None,
-                    "graphrag": self.services.graphrag is not None,
-                },
+                "status": "healthy" if all_healthy else "degraded",
+                "services": services,
             }
 
         return app

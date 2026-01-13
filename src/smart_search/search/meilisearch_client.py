@@ -8,6 +8,7 @@ from typing import Any
 
 from meilisearch_python_sdk import AsyncClient
 from meilisearch_python_sdk.errors import MeilisearchApiError
+from meilisearch_python_sdk.models.search import Hybrid
 from meilisearch_python_sdk.models.settings import (
     Embedders,
     MeilisearchSettings,
@@ -93,7 +94,7 @@ class MeilisearchClient:
         try:
             if recreate:
                 try:
-                    await client.delete_index(self.index_name)
+                    await client.delete_index_if_exists(self.index_name)
                     logger.info("Deleted existing index", index=self.index_name)
                 except MeilisearchApiError:
                     pass  # Index doesn't exist
@@ -308,12 +309,12 @@ class MeilisearchClient:
             if query.search_type == SearchType.SEMANTIC and embedding:
                 # Pure semantic search
                 search_params["vector"] = embedding
-                search_params["hybrid"] = {"semanticRatio": 1.0}
+                search_params["hybrid"] = Hybrid(semantic_ratio=1.0, embedder="default")
                 result = await index.search(query.query, **search_params)
             elif query.search_type == SearchType.HYBRID and embedding:
                 # Hybrid search
                 search_params["vector"] = embedding
-                search_params["hybrid"] = {"semanticRatio": 0.5}
+                search_params["hybrid"] = Hybrid(semantic_ratio=0.5, embedder="default")
                 result = await index.search(query.query, **search_params)
             else:
                 # Keyword search

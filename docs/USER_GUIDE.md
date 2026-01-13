@@ -1,879 +1,632 @@
-# Smart Search - Hướng dẫn sử dụng
+# Smart Search - User Guide
+
+> Intelligent Source Code Navigation System V2.1
 
 ## Mục lục
+
 1. [Giới thiệu](#1-giới-thiệu)
-2. [Cài đặt và Khởi động](#2-cài-đặt-và-khởi-động)
-3. [Index Codebase](#3-index-codebase)
-4. [Tìm kiếm Code](#4-tìm-kiếm-code)
-5. [Code Navigation](#5-code-navigation)
-6. [Phân tích Code](#6-phân-tích-code)
-7. [GraphRAG - Hỏi đáp thông minh](#7-graphrag---hỏi-đáp-thông-minh)
-8. [Graph Operations](#8-graph-operations)
-9. [Cấu hình nâng cao](#9-cấu-hình-nâng-cao)
+2. [Quick Start](#2-quick-start)
+3. [Tính năng](#3-tính-năng)
+   - [Search - Tìm kiếm mã nguồn](#31-search---tìm-kiếm-mã-nguồn)
+   - [RAG Search - Tìm kiếm AI](#32-rag-search---tìm-kiếm-ai)
+   - [Navigate - Điều hướng code](#33-navigate---điều-hướng-code)
+   - [Analyze - Phân tích code](#34-analyze---phân-tích-code)
+   - [Graph - Code Graph](#35-graph---code-graph-operations)
+   - [Index - Quản lý Index](#36-index---quản-lý-index)
+4. [Cấu hình](#4-cấu-hình)
+5. [Load Testing](#5-load-testing)
+6. [Troubleshooting](#6-troubleshooting)
 
 ---
 
 ## 1. Giới thiệu
 
 Smart Search là hệ thống tìm kiếm và điều hướng mã nguồn thông minh, kết hợp:
-- **Hybrid Search**: Tìm kiếm kết hợp keyword và semantic
+
+- **Keyword Search**: Tìm kiếm văn bản truyền thống
+- **Semantic Search**: Tìm kiếm dựa trên ngữ nghĩa bằng AI
+- **Hybrid Search**: Kết hợp cả hai phương pháp
 - **Code Graph**: Phân tích quan hệ giữa các thành phần code
-- **GraphRAG**: Hỏi đáp thông minh về codebase bằng AI
+- **RAG (Retrieval-Augmented Generation)**: Trả lời câu hỏi bằng ngôn ngữ tự nhiên
 
 ### Kiến trúc hệ thống
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      Smart Search API                        │
-├─────────────┬─────────────┬─────────────┬──────────────────┤
-│   Search    │  Navigate   │   Analyze   │    GraphRAG      │
-├─────────────┴─────────────┴─────────────┴──────────────────┤
-│                     Graph Engine (RustworkX)                │
+│                    Smart Search API                         │
+│                   http://localhost:8000                     │
 ├─────────────────────────────────────────────────────────────┤
-│  Tree-sitter Parser  │  Embedding Pipeline  │  Meilisearch  │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────────────┐│
+│  │ Search  │  │Navigate │  │ Analyze │  │      Graph      ││
+│  │Endpoints│  │Endpoints│  │Endpoints│  │    Endpoints    ││
+│  └────┬────┘  └────┬────┘  └────┬────┘  └────────┬────────┘│
+│       │            │            │                │          │
+│  ┌────▼────────────▼────────────▼────────────────▼────────┐│
+│  │              Service Orchestrator                       ││
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ││
+│  │  │HybridSearcher│  │ReferenceIndex│  │  CodeGraph   │  ││
+│  │  └──────┬───────┘  └──────────────┘  └──────────────┘  ││
+│  └─────────┼──────────────────────────────────────────────┘│
+│            │                                                │
+│  ┌─────────▼─────────┐                                     │
+│  │   Meilisearch     │  (Vector Search + Full-text)        │
+│  │  localhost:7700   │                                     │
+│  └───────────────────┘                                     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. Cài đặt và Khởi động
+## 2. Quick Start
 
-### 2.1 Yêu cầu hệ thống
+### Yêu cầu
+
 - Python 3.12+
-- Meilisearch (optional, cho full-text search)
-- Jina AI API key (optional, cho semantic search)
+- Docker & Docker Compose
+- 4GB+ RAM
 
-### 2.2 Khởi động server
+### Bước 1: Khởi động Meilisearch
 
 ```bash
 cd /home/fong/Projects/smart_search
-source .venv/bin/activate
-PYTHONPATH=src python -m smart_search.main
+
+# Start Meilisearch
+docker compose up -d meilisearch
+
+# Bật vector store (chạy 1 lần sau khi khởi động)
+curl -X PATCH http://localhost:7700/experimental-features \
+  -H "Authorization: Bearer smart_search_dev_key" \
+  -H "Content-Type: application/json" \
+  -d '{"vectorStore": true}'
 ```
 
-Server sẽ chạy tại: `http://localhost:8000`
-
-### 2.3 Kiểm tra trạng thái
+### Bước 2: Khởi động Smart Search API
 
 ```bash
+# Bật đầy đủ tính năng
+FF_USE_HYBRID_SEARCHER=true \
+FF_USE_REFERENCE_INDEX=true \
+MEILISEARCH_API_KEY=smart_search_dev_key \
+PYTHONPATH=src .venv/bin/uvicorn smart_search.api:create_app \
+  --factory --host 0.0.0.0 --port 8000
+```
+
+### Bước 3: Kiểm tra
+
+```bash
+# Kiểm tra API
+curl http://localhost:8000/
+
+# Kiểm tra health
 curl http://localhost:8000/health
 ```
 
-Response:
+**Kết quả mong đợi:**
 ```json
 {
   "status": "healthy",
-  "version": "0.1.0",
   "services": {
-    "graph": "ok",
-    "search": "ok"
+    "graph": true,
+    "searcher": true,
+    "indexer": true,
+    "meilisearch": {"available": true, "healthy": true}
   }
 }
 ```
 
-### 2.4 API Documentation
-
-Mở browser tại: `http://localhost:8000/docs`
-
 ---
 
-## 3. Index Codebase
+## 3. Tính năng
 
-Trước khi tìm kiếm, bạn cần index codebase của mình.
+### 3.1 Search - Tìm kiếm mã nguồn
 
-### 3.1 Index một thư mục
-
-```bash
-curl -X POST http://localhost:8000/api/v1/index \
-  -H "Content-Type: application/json" \
-  -d '{
-    "paths": ["/path/to/your/project"],
-    "recursive": true,
-    "languages": ["python"]
-  }'
-```
-
-Response:
-```json
-{
-  "job_id": "idx_abc123",
-  "status": "started",
-  "message": "Indexing started for 1 paths"
-}
-```
-
-### 3.2 Kiểm tra tiến độ index
-
-```bash
-curl http://localhost:8000/api/v1/index/progress/idx_abc123
-```
-
-Response:
-```json
-{
-  "job_id": "idx_abc123",
-  "status": "completed",
-  "progress": 100,
-  "files_processed": 150,
-  "files_total": 150,
-  "errors": []
-}
-```
-
-### 3.3 Index với exclude patterns
-
-```bash
-curl -X POST http://localhost:8000/api/v1/index \
-  -H "Content-Type: application/json" \
-  -d '{
-    "paths": ["/path/to/project"],
-    "recursive": true,
-    "languages": ["python", "javascript"],
-    "exclude_patterns": [
-      "**/node_modules/**",
-      "**/__pycache__/**",
-      "**/test/**",
-      "**/.git/**"
-    ]
-  }'
-```
-
-### 3.4 Cập nhật incremental
-
-Chỉ index các file đã thay đổi:
-
-```bash
-curl -X POST http://localhost:8000/api/v1/index/update \
-  -H "Content-Type: application/json" \
-  -d '{
-    "paths": ["/path/to/project"],
-    "mode": "incremental"
-  }'
-```
-
-### 3.5 Xem thống kê index
-
-```bash
-curl http://localhost:8000/api/v1/index/stats
-```
-
-Response:
-```json
-{
-  "total_files": 150,
-  "total_units": 1250,
-  "languages": {
-    "python": 120,
-    "javascript": 30
-  },
-  "unit_types": {
-    "function": 800,
-    "class": 200,
-    "method": 250
-  },
-  "last_indexed": "2025-12-14T10:30:00Z"
-}
-```
-
----
-
-## 4. Tìm kiếm Code
-
-### 4.1 Tìm kiếm cơ bản (Hybrid Search)
+#### Keyword Search (Tìm kiếm từ khóa)
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/search \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "user authentication login",
-    "limit": 10
+    "query": "authentication",
+    "limit": 10,
+    "search_type": "keyword"
   }'
 ```
 
-Response:
-```json
-{
-  "query": "user authentication login",
-  "hits": [
-    {
-      "id": "auth.py::login_user",
-      "name": "login_user",
-      "qualified_name": "auth.login_user",
-      "code_type": "function",
-      "file_path": "/project/auth.py",
-      "line_start": 45,
-      "line_end": 60,
-      "score": 0.95,
-      "highlights": ["def login_user(username, password):"]
-    }
-  ],
-  "total": 15,
-  "search_type": "hybrid"
-}
-```
+#### Semantic Search (Tìm kiếm ngữ nghĩa)
 
-### 4.2 Tìm kiếm theo loại
+Tìm kiếm dựa trên ý nghĩa, không chỉ từ khóa:
 
 ```bash
-# Chỉ tìm keyword
-curl -X POST http://localhost:8000/api/v1/search \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "parse json",
-    "search_type": "keyword",
-    "limit": 10
-  }'
-
-# Chỉ tìm semantic
 curl -X POST http://localhost:8000/api/v1/search \
   -H "Content-Type: application/json" \
   -d '{
     "query": "function that validates user input",
-    "search_type": "semantic",
-    "limit": 10
+    "limit": 10,
+    "search_type": "semantic"
   }'
 ```
 
-### 4.3 Tìm kiếm với filters
+#### Hybrid Search (Khuyên dùng)
+
+Kết hợp keyword + semantic:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/search \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "database connection",
-    "limit": 10,
-    "filters": {
-      "language": "python",
-      "code_type": "function",
-      "file_pattern": "**/models/**"
-    }
+    "query": "parse JSON config",
+    "limit": 10
   }'
 ```
 
-### 4.4 Tìm code tương tự
+#### Search với Filters
 
-Tìm các đoạn code tương tự với một đoạn code cho trước:
+```bash
+curl -X POST http://localhost:8000/api/v1/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "parse",
+    "limit": 20,
+    "language": "python",
+    "code_type": "function",
+    "file_path": "src/"
+  }'
+```
+
+#### GET Search (Đơn giản)
+
+```bash
+curl "http://localhost:8000/api/v1/search?q=authenticate&limit=5"
+```
+
+**Tham số:**
+
+| Tham số | Kiểu | Mặc định | Mô tả |
+|---------|------|----------|-------|
+| `query` | string | bắt buộc | Từ khóa tìm kiếm (1-1000 ký tự) |
+| `search_type` | string | `hybrid` | `keyword`, `semantic`, `hybrid` |
+| `limit` | int | 20 | Số kết quả tối đa (1-100) |
+| `offset` | int | 0 | Offset cho phân trang |
+| `language` | string | null | Lọc theo ngôn ngữ (python, php, ...) |
+| `file_path` | string | null | Lọc theo đường dẫn file |
+| `code_type` | string | null | Lọc theo loại (function, class, method) |
+
+**Response:**
+
+```json
+{
+  "query": "parse",
+  "total_hits": 15,
+  "hits": [
+    {
+      "id": "src.parser.parse_json",
+      "name": "parse_json",
+      "qualified_name": "src.parser.parse_json",
+      "code_type": "function",
+      "file_path": "src/parser.py",
+      "line_start": 45,
+      "line_end": 67,
+      "content": "def parse_json(data: str) -> dict:\n    ...",
+      "language": "python",
+      "score": 0.95,
+      "highlights": ["<mark>parse</mark>_json"]
+    }
+  ],
+  "processing_time_ms": 12.5
+}
+```
+
+---
+
+### 3.2 RAG Search - Tìm kiếm AI
+
+#### RAG Query (Trả lời ngôn ngữ tự nhiên)
+
+```bash
+curl -X POST http://localhost:8000/api/v1/search/rag \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "How does the authentication flow work?",
+    "mode": "hybrid",
+    "include_explanation": true
+  }'
+```
+
+**Modes:**
+
+| Mode | Mô tả | Phù hợp cho |
+|------|-------|-------------|
+| `local` | Tìm trong context cục bộ | Câu hỏi về function/class cụ thể |
+| `global` | Tìm toàn bộ codebase | Câu hỏi về kiến trúc |
+| `hybrid` | Kết hợp local + global | Câu hỏi chung (khuyên dùng) |
+| `drift` | Theo dõi quan hệ code | "X kết nối với Y như thế nào?" |
+
+**Response:**
+
+```json
+{
+  "query": "How does authentication work?",
+  "mode": "hybrid",
+  "answer": "Authentication được xử lý bởi function `authenticate()` trong `src/auth.py`. Nó validate credentials với database và trả về JWT token...",
+  "contexts": [
+    {
+      "code_id": "src.auth.authenticate",
+      "content": "def authenticate(username, password)...",
+      "relevance_score": 0.92
+    }
+  ],
+  "citations": ["auth.authenticate", "auth.verify_token"],
+  "processing_time_ms": 1250.5
+}
+```
+
+#### Find Similar Code (Tìm code tương tự)
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/search/similar \
   -H "Content-Type: application/json" \
   -d '{
-    "code": "def connect_database(host, port, user, password):\n    return create_connection(host, port, user, password)",
+    "code": "def validate_email(email):\n    import re\n    pattern = r\"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$\"\n    return re.match(pattern, email) is not None",
     "limit": 5
   }'
 ```
 
-### 4.5 Gợi ý tìm kiếm
+**Ứng dụng:**
+- Tìm code trùng lặp
+- Khám phá implementations tương tự
+- Cơ hội refactor
+
+#### Search Suggestions (Autocomplete)
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/search/suggest \
-  -H "Content-Type: application/json" \
-  -d '{
-    "prefix": "user_",
-    "limit": 10
-  }'
-```
-
-Response:
-```json
-{
-  "suggestions": [
-    "user_login",
-    "user_logout",
-    "user_register",
-    "user_profile",
-    "user_settings"
-  ]
-}
+curl "http://localhost:8000/api/v1/search/suggest?q=auth&limit=10"
 ```
 
 ---
 
-## 5. Code Navigation
+### 3.3 Navigate - Điều hướng code
 
-### 5.1 Go to Definition
-
-Tìm định nghĩa của một symbol tại vị trí cụ thể:
+#### Go to Definition
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/navigate/definition \
   -H "Content-Type: application/json" \
   -d '{
-    "file_path": "/project/main.py",
-    "line": 25,
-    "column": 10
+    "symbol": "authenticate",
+    "file_path": "src/api/login.py",
+    "line": 25
   }'
 ```
 
-Response:
-```json
-{
-  "found": true,
-  "definition": {
-    "id": "utils.py::helper_function",
-    "name": "helper_function",
-    "file_path": "/project/utils.py",
-    "line_start": 15,
-    "line_end": 25,
-    "code_type": "function"
-  }
-}
-```
-
-### 5.2 Find References
-
-Tìm tất cả nơi sử dụng một function/class:
+#### Find References (Tìm nơi sử dụng)
 
 ```bash
-curl http://localhost:8000/api/v1/navigate/references/auth.py::login_user?limit=50
+curl "http://localhost:8000/api/v1/navigate/references/{code_id}?limit=50"
 ```
 
-Response:
+**Response:**
+
 ```json
 {
-  "code_id": "auth.py::login_user",
+  "code_id": "auth.authenticate",
   "references": [
-    {
-      "file_path": "/project/main.py",
-      "line": 45,
-      "column": 12,
-      "context": "result = login_user(username, password)"
-    },
-    {
-      "file_path": "/project/api/routes.py",
-      "line": 78,
-      "column": 8,
-      "context": "user = login_user(data.username, data.password)"
-    }
+    {"file_path": "src/api/login.py", "line": 25, "context": "user = authenticate(username, password)"},
+    {"file_path": "src/api/oauth.py", "line": 42, "context": "return authenticate(email, token)"}
   ],
   "total": 2
 }
 ```
 
-### 5.3 Find Callers
-
-Tìm các function gọi đến một function:
+#### Find Callers (Ai gọi function này?)
 
 ```bash
-curl http://localhost:8000/api/v1/navigate/callers/utils.py::validate_input?depth=2
+curl "http://localhost:8000/api/v1/navigate/callers/{code_id}"
 ```
 
-Response:
+#### Find Callees (Function này gọi gì?)
+
+```bash
+curl "http://localhost:8000/api/v1/navigate/callees/{code_id}"
+```
+
+#### Get Class Hierarchy
+
+```bash
+curl "http://localhost:8000/api/v1/navigate/hierarchy/{code_id}?depth=3"
+```
+
+#### File Outline (Danh sách symbols trong file)
+
+```bash
+curl "http://localhost:8000/api/v1/navigate/outline?file_path=src/auth.py"
+```
+
+**Response:**
+
 ```json
 {
-  "code_id": "utils.py::validate_input",
-  "callers": [
-    {
-      "id": "api.py::create_user",
-      "name": "create_user",
-      "file_path": "/project/api.py",
-      "depth": 1
-    },
-    {
-      "id": "main.py::process_form",
-      "name": "process_form",
-      "file_path": "/project/main.py",
-      "depth": 2
-    }
+  "file_path": "src/auth.py",
+  "symbols": [
+    {"name": "AUTH_SECRET", "type": "constant", "line": 5},
+    {"name": "authenticate", "type": "function", "line": 15},
+    {"name": "AuthError", "type": "class", "line": 72}
   ]
 }
 ```
 
-### 5.4 Find Callees
-
-Tìm các function được gọi bởi một function:
+#### Search Symbols
 
 ```bash
-curl http://localhost:8000/api/v1/navigate/callees/main.py::main?depth=2
-```
-
-### 5.5 Class Hierarchy
-
-Xem cây kế thừa của một class:
-
-```bash
-curl http://localhost:8000/api/v1/navigate/hierarchy/models.py::User?max_depth=3
-```
-
-Response:
-```json
-{
-  "code_id": "models.py::User",
-  "parents": [
-    {
-      "id": "models.py::BaseModel",
-      "name": "BaseModel"
-    }
-  ],
-  "children": [
-    {
-      "id": "models.py::AdminUser",
-      "name": "AdminUser"
-    },
-    {
-      "id": "models.py::GuestUser",
-      "name": "GuestUser"
-    }
-  ]
-}
-```
-
-### 5.6 File Outline
-
-Xem cấu trúc của một file:
-
-```bash
-curl "http://localhost:8000/api/v1/navigate/outline?file_path=/project/auth.py"
-```
-
-Response:
-```json
-{
-  "file_path": "/project/auth.py",
-  "outline": [
-    {
-      "name": "User",
-      "type": "class",
-      "line_start": 10,
-      "line_end": 45,
-      "children": [
-        {
-          "name": "__init__",
-          "type": "method",
-          "line_start": 12,
-          "line_end": 18
-        },
-        {
-          "name": "validate",
-          "type": "method",
-          "line_start": 20,
-          "line_end": 30
-        }
-      ]
-    },
-    {
-      "name": "login_user",
-      "type": "function",
-      "line_start": 50,
-      "line_end": 65
-    }
-  ]
-}
-```
-
-### 5.7 Symbol Search
-
-Tìm kiếm symbols theo tên:
-
-```bash
-curl "http://localhost:8000/api/v1/navigate/symbols?query=User&type=class&limit=10"
+curl "http://localhost:8000/api/v1/navigate/symbols?query=User&type=class"
 ```
 
 ---
 
-## 6. Phân tích Code
+### 3.4 Analyze - Phân tích code
 
-### 6.1 Explain Code
-
-Giải thích một đoạn code bằng AI:
+#### Explain Code (Giải thích code)
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/analyze/explain \
   -H "Content-Type: application/json" \
   -d '{
-    "code_id": "auth.py::login_user",
-    "include_context": true
+    "code": "def factorial(n):\n    return 1 if n <= 1 else n * factorial(n-1)",
+    "question": "What is the time complexity?"
   }'
 ```
 
-Response:
-```json
-{
-  "code_id": "auth.py::login_user",
-  "explanation": "Hàm login_user thực hiện xác thực người dùng...",
-  "summary": "Xác thực người dùng với username và password",
-  "complexity": "medium",
-  "related_functions": ["hash_password", "verify_token"]
-}
-```
-
-### 6.2 Impact Analysis
-
-Phân tích ảnh hưởng khi thay đổi một function:
+#### Impact Analysis (Phân tích ảnh hưởng)
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/analyze/impact \
   -H "Content-Type: application/json" \
   -d '{
-    "code_id": "utils.py::format_date",
-    "max_depth": 3,
-    "include_indirect": true
+    "code_id": "auth.authenticate",
+    "depth": 3
   }'
 ```
 
-Response:
+**Response:**
+
 ```json
 {
-  "code_id": "utils.py::format_date",
+  "code_id": "auth.authenticate",
   "impact": {
     "direct_dependents": 5,
-    "indirect_dependents": 12,
-    "affected_files": [
-      "/project/api/routes.py",
-      "/project/views/dashboard.py",
-      "/project/reports/generator.py"
-    ],
-    "risk_level": "medium",
-    "recommendations": [
-      "Cần update 5 functions gọi trực tiếp",
-      "Kiểm tra test coverage cho các file bị ảnh hưởng"
-    ]
+    "indirect_dependents": 23,
+    "affected_files": ["api/login.py", "api/oauth.py"],
+    "risk_level": "high"
   }
 }
 ```
 
-### 6.3 Code Metrics
-
-Xem metrics của một code unit:
+#### Code Metrics (Độ phức tạp)
 
 ```bash
-curl http://localhost:8000/api/v1/analyze/metrics/auth.py::User
+curl "http://localhost:8000/api/v1/analyze/metrics/{code_id}"
 ```
 
-Response:
-```json
-{
-  "code_id": "auth.py::User",
-  "metrics": {
-    "lines_of_code": 35,
-    "cyclomatic_complexity": 8,
-    "cognitive_complexity": 12,
-    "method_count": 5,
-    "dependencies": 3,
-    "dependents": 8
-  }
-}
-```
-
-### 6.4 Dependency Analysis
-
-Phân tích dependencies của một module:
+#### Get Dependencies
 
 ```bash
-curl http://localhost:8000/api/v1/analyze/dependencies/auth.py?depth=2
+curl "http://localhost:8000/api/v1/analyze/dependencies/{code_id}?direction=both&depth=2"
 ```
 
-Response:
-```json
-{
-  "file_path": "auth.py",
-  "imports": [
-    {
-      "module": "hashlib",
-      "type": "stdlib"
-    },
-    {
-      "module": "utils",
-      "type": "internal",
-      "functions_used": ["validate_input", "format_error"]
-    }
-  ],
-  "imported_by": [
-    "main.py",
-    "api/routes.py"
-  ]
-}
-```
-
-### 6.5 Find Duplicates
-
-Tìm code trùng lặp:
+#### Find Duplicates (Tìm code trùng lặp)
 
 ```bash
-curl http://localhost:8000/api/v1/analyze/duplicates/utils.py::process_data?threshold=0.8
+curl "http://localhost:8000/api/v1/analyze/duplicates/{code_id}?threshold=0.8"
 ```
 
-Response:
-```json
-{
-  "code_id": "utils.py::process_data",
-  "duplicates": [
-    {
-      "id": "helpers.py::handle_data",
-      "similarity": 0.92,
-      "file_path": "/project/helpers.py",
-      "line_start": 45
-    }
-  ]
-}
-```
-
-### 6.6 Summarize Module
-
-Tóm tắt một module/file:
+#### Summarize File
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/analyze/summarize \
   -H "Content-Type: application/json" \
-  -d '{
-    "file_path": "/project/auth.py"
-  }'
+  -d '{"file_path": "src/auth.py"}'
 ```
 
 ---
 
-## 7. GraphRAG - Hỏi đáp thông minh
+### 3.5 Graph - Code Graph Operations
 
-### 7.1 Hỏi về codebase
-
-```bash
-curl -X POST http://localhost:8000/api/v1/search/rag \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "How does user authentication work in this project?",
-    "mode": "local"
-  }'
-```
-
-Response:
-```json
-{
-  "query": "How does user authentication work in this project?",
-  "answer": "User authentication trong project này hoạt động như sau:\n\n1. **Login Flow**:\n   - User gửi credentials đến `login_user()` trong `auth.py`\n   - Password được verify bằng `hash_password()`\n   - Nếu thành công, JWT token được tạo bởi `create_token()`\n\n2. **Token Validation**:\n   - Mỗi request được validate bởi middleware `verify_token()`\n   - Token expired sẽ trả về 401 Unauthorized\n\n3. **Related Functions**:\n   - `auth.py::login_user` - Entry point\n   - `auth.py::verify_password` - Password verification\n   - `utils.py::create_jwt_token` - Token generation",
-  "sources": [
-    {
-      "id": "auth.py::login_user",
-      "relevance": 0.95
-    },
-    {
-      "id": "auth.py::verify_password",
-      "relevance": 0.88
-    }
-  ],
-  "mode": "local"
-}
-```
-
-### 7.2 Các mode của GraphRAG
-
-```bash
-# Local mode - Focus vào chi tiết cụ thể
-curl -X POST http://localhost:8000/api/v1/search/rag \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "What parameters does login_user accept?",
-    "mode": "local"
-  }'
-
-# Global mode - Nhìn tổng quan architecture
-curl -X POST http://localhost:8000/api/v1/search/rag \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "What is the overall architecture of this project?",
-    "mode": "global"
-  }'
-
-# Hybrid mode - Kết hợp cả hai
-curl -X POST http://localhost:8000/api/v1/search/rag \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "How do the authentication and authorization modules interact?",
-    "mode": "hybrid"
-  }'
-
-# Drift mode - Follow relationships
-curl -X POST http://localhost:8000/api/v1/search/rag \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "Trace the flow from user login to dashboard access",
-    "mode": "drift"
-  }'
-```
-
-### 7.3 Các câu hỏi mẫu
-
-```bash
-# Hỏi về function cụ thể
-"What does the process_payment function do?"
-
-# Hỏi về design patterns
-"What design patterns are used in this codebase?"
-
-# Hỏi về dependencies
-"What external libraries does this project depend on?"
-
-# Hỏi về error handling
-"How are errors handled in the API layer?"
-
-# Hỏi về testing
-"How is the authentication module tested?"
-
-# Hỏi về data flow
-"How does data flow from user input to database?"
-```
-
----
-
-## 8. Graph Operations
-
-### 8.1 Graph Statistics
+#### Graph Statistics
 
 ```bash
 curl http://localhost:8000/api/v1/graph/stats
 ```
 
-Response:
-```json
-{
-  "node_count": 1250,
-  "edge_count": 3500,
-  "node_types": {
-    "function": 800,
-    "class": 200,
-    "method": 250
-  },
-  "edge_types": {
-    "calls": 2000,
-    "imports": 500,
-    "inherits": 100,
-    "contains": 900
-  }
-}
-```
-
-### 8.2 Get Node Details
+#### Get/List Nodes
 
 ```bash
-curl http://localhost:8000/api/v1/graph/node/auth.py::User
+# Get single node
+curl "http://localhost:8000/api/v1/graph/node/{node_id}"
+
+# List nodes
+curl "http://localhost:8000/api/v1/graph/nodes?type=function&limit=50"
 ```
 
-### 8.3 Get Subgraph
-
-Lấy subgraph xung quanh một node:
+#### Get/List Edges
 
 ```bash
-curl "http://localhost:8000/api/v1/graph/subgraph/auth.py::login_user?depth=2&max_nodes=50"
+curl "http://localhost:8000/api/v1/graph/edges?type=calls&limit=50"
 ```
 
-### 8.4 Find Path
-
-Tìm đường đi giữa hai nodes:
+#### Get Subgraph
 
 ```bash
-curl "http://localhost:8000/api/v1/graph/path?source=main.py::main&target=db.py::connect&max_depth=5"
+curl "http://localhost:8000/api/v1/graph/subgraph/{node_id}?depth=2&max_nodes=100"
 ```
 
-### 8.5 Community Detection
+#### Find Path (Tìm đường đi)
 
-Phát hiện các module/community trong codebase:
+```bash
+curl "http://localhost:8000/api/v1/graph/path?from={node_1}&to={node_2}&max_depth=5"
+```
+
+#### Get Communities
 
 ```bash
 curl http://localhost:8000/api/v1/graph/communities
 ```
 
-### 8.6 Files in Graph
-
-Xem các files đã được index:
+#### List/Get Files
 
 ```bash
-curl "http://localhost:8000/api/v1/graph/files?pattern=**/*.py&limit=50"
+# List files
+curl "http://localhost:8000/api/v1/graph/files?pattern=src/**/*.py"
+
+# Get file nodes
+curl "http://localhost:8000/api/v1/graph/file/src%2Fauth.py/nodes"
 ```
 
 ---
 
-## 9. Cấu hình nâng cao
+### 3.6 Index - Quản lý Index
 
-### 9.1 Environment Variables
-
-```bash
-# Server
-export SMART_SEARCH_HOST=0.0.0.0
-export SMART_SEARCH_PORT=8000
-export SMART_SEARCH_DEBUG=true
-
-# Meilisearch (optional)
-export MEILISEARCH_URL=http://localhost:7700
-export MEILISEARCH_API_KEY=your_api_key
-
-# Jina AI (optional, for semantic search)
-export JINA_API_KEY=your_jina_api_key
-
-# LLM for GraphRAG (optional)
-export OPENAI_API_KEY=your_openai_key
-# hoặc
-export ANTHROPIC_API_KEY=your_anthropic_key
-```
-
-### 9.2 Config File
-
-Tạo file `config.yaml`:
-
-```yaml
-server:
-  host: 0.0.0.0
-  port: 8000
-  debug: true
-
-indexing:
-  batch_size: 100
-  languages:
-    - python
-    - javascript
-    - typescript
-  exclude_patterns:
-    - "**/node_modules/**"
-    - "**/__pycache__/**"
-    - "**/venv/**"
-
-search:
-  default_limit: 20
-  max_limit: 100
-  hybrid_weight: 0.5  # 0 = only keyword, 1 = only semantic
-
-graph:
-  max_depth: 10
-  community_detection: true
-
-rag:
-  model: "gpt-4"  # hoặc "claude-3-opus"
-  temperature: 0.1
-  max_tokens: 2000
-```
-
-### 9.3 Chạy với config
+#### Index Project
 
 ```bash
-PYTHONPATH=src python -m smart_search.main --config config.yaml
+curl -X POST http://localhost:8000/api/v1/index \
+  -H "Content-Type: application/json" \
+  -d '{
+    "paths": ["/path/to/project"],
+    "excludes": ["node_modules", "__pycache__", ".git"],
+    "languages": ["python", "php"],
+    "incremental": true
+  }'
+```
+
+#### Index Status
+
+```bash
+curl http://localhost:8000/api/v1/index/status
+```
+
+#### Get Indexed Files
+
+```bash
+curl "http://localhost:8000/api/v1/index/files?limit=100"
+```
+
+#### Get References (Fast O(1))
+
+```bash
+curl "http://localhost:8000/api/v1/index/references?filename=auth.py&limit=50"
 ```
 
 ---
 
-## Troubleshooting
+## 4. Cấu hình
 
-### Server không khởi động được
+### Environment Variables
+
+| Biến | Mặc định | Mô tả |
+|------|----------|-------|
+| `MEILISEARCH_URL` | `http://localhost:7700` | URL Meilisearch |
+| `MEILISEARCH_API_KEY` | `smart_search_dev_key` | API key |
+| `DATA_DIR` | `.smart_search` | Thư mục lưu data |
+
+### Feature Flags
+
+| Flag | Mặc định | Mô tả |
+|------|----------|-------|
+| `FF_USE_HYBRID_SEARCHER` | `false` | Bật HybridSearcher |
+| `FF_USE_REFERENCE_INDEX` | `false` | Bật Reference Index (O(1)) |
+| `FF_USE_FILE_CACHE` | `true` | Bật LRU file cache |
+| `FF_USE_ASYNC_IO` | `true` | Bật async file I/O |
+
+### Ví dụ Production
+
 ```bash
-# Kiểm tra port đã được sử dụng chưa
-lsof -i :8000
+# .env file
+MEILISEARCH_URL=http://meilisearch:7700
+MEILISEARCH_API_KEY=your_secure_key
+DATA_DIR=/var/lib/smart_search
 
-# Kill process nếu cần
-kill -9 <PID>
+FF_USE_HYBRID_SEARCHER=true
+FF_USE_REFERENCE_INDEX=true
+FF_USE_FILE_CACHE=true
+FF_USE_ASYNC_IO=true
 ```
-
-### Index chậm
-- Thêm exclude patterns cho các thư mục không cần thiết
-- Sử dụng incremental update thay vì full index
-
-### Search không trả về kết quả
-- Kiểm tra đã index codebase chưa: `GET /api/v1/index/stats`
-- Kiểm tra file có trong danh sách languages được hỗ trợ không
-
-### GraphRAG không hoạt động
-- Kiểm tra đã cấu hình LLM API key chưa
-- Kiểm tra logs: `tail -f logs/smart_search.log`
 
 ---
 
-## Liên hệ & Hỗ trợ
+## 5. Load Testing
 
-- GitHub Issues: [Report bugs](https://github.com/your-repo/smart-search/issues)
-- Documentation: http://localhost:8000/docs
+### Interactive Mode
+
+```bash
+locust -f scripts/load_test.py --host=http://localhost:8000
+# Mở http://localhost:8089
+```
+
+### Headless Mode (CI/CD)
+
+```bash
+locust -f scripts/load_test.py \
+  --host=http://localhost:8000 \
+  --users 100 \
+  --spawn-rate 10 \
+  --run-time 5m \
+  --headless
+```
+
+### Performance Targets
+
+| Metric | Target |
+|--------|--------|
+| Search p50 | < 20ms |
+| Search p99 | < 50ms |
+| find_references p50 | < 100ms |
+| find_references p99 | < 500ms |
+| Concurrent users | 100+ |
+
+---
+
+## 6. Troubleshooting
+
+### Meilisearch lỗi kết nối
+
+```bash
+# Kiểm tra Meilisearch
+curl http://localhost:7700/health
+
+# Restart
+docker compose restart meilisearch
+```
+
+### Vector Store chưa bật
+
+```bash
+curl -X PATCH http://localhost:7700/experimental-features \
+  -H "Authorization: Bearer smart_search_dev_key" \
+  -H "Content-Type: application/json" \
+  -d '{"vectorStore": true}'
+```
+
+### Search trả về empty
+
+1. Kiểm tra index:
+   ```bash
+   curl http://localhost:8000/api/v1/index/status
+   ```
+
+2. Re-index:
+   ```bash
+   curl -X POST http://localhost:8000/api/v1/index \
+     -H "Content-Type: application/json" \
+     -d '{"paths": ["/your/project"], "incremental": false}'
+   ```
+
+---
+
+## API Documentation
+
+- **Swagger UI**: http://localhost:8000/docs
+- **ReDoc**: http://localhost:8000/redoc
+- **OpenAPI JSON**: http://localhost:8000/openapi.json
+
+---
+
+*Smart Search V2.1 - Built with FastAPI, Meilisearch, and AI*
